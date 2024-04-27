@@ -48,6 +48,7 @@ class DebugVSPlugin(QObject):
             import debugpy
 
             self.debugpy = debugpy
+            self.debugpy.configure(python=get_qgis_python_path())
         except:
             pass
         self.port = 5678
@@ -160,3 +161,13 @@ class DebugVSPlugin(QObject):
 
         self.debugpy.wait_for_client()
         exec(open(filename).read())
+
+def get_qgis_python_path():
+    if sys.platform.startswith("linux"):
+        return sys.executable
+    pythonExec = os.path.dirname(sys.executable)
+    if sys.platform == "win32":
+        pythonExec += "\\python3"
+    else:
+        pythonExec += "/bin/python3"
+    return pythonExec
