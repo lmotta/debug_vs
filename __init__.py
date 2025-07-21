@@ -28,12 +28,21 @@ __revision__ = "$Format:%H$"
 
 import os
 import sys
+import runpy
 
 from qgis.core import QgsApplication
 from qgis.PyQt.QtCore import QObject, pyqtSlot
 from qgis.PyQt.QtGui import QIcon
 from qgis.PyQt.QtWidgets import QAction, QFileDialog, QMenu, QToolButton
 
+
+def getQGisPythonPath():
+    if sys.platform.startswith('linux'):
+        return sys.executable
+    
+    pythonExec = os.path.dirname( sys.executable )
+    pythonExec += '\\python3' if sys.platform == 'win32' else '/bin/python3'
+    return pythonExec
 
 def classFactory(iface):
     return DebugVSPlugin(iface)
@@ -48,6 +57,8 @@ class DebugVSPlugin(QObject):
             import debugpy
 
             self.debugpy = debugpy
+            self.debugpy.configure(python=getQGisPythonPath())
+            self.debugpy._already_listening = False
         except:
             pass
         self.port = 5678
@@ -63,12 +74,15 @@ class DebugVSPlugin(QObject):
         self.toolBtnAction = self.iface.addToolBarWidget(self.toolButton)
 
         self.msgBar = iface.messageBar()
-        self.pluginName = "DebugVS"
-        self.nameActionEnable = "Enable Debug for Visual Studio"
+        self.pluginName = 'DebugVS'
+        self.nameActionEnable = 'Enable Visual Studio Debugging'
         self.action = None
-        # Check exist sys.argv
+
         if not hasattr(sys, "argv"):
             sys.argv = []
+        
+        self.msg_debug = f'"type": "debugpy", "request": "attach", "host": "{self.host}", "port": {self.port}'
+        self.msg_vs = 'Visual Studio Remote Debugging'
 
     def initGui(self):
         # Action Run
@@ -116,47 +130,57 @@ class DebugVSPlugin(QObject):
     def _checkEnable(self):
         if not self.debugpy.is_client_connected():
             self.msgBar.popWidget()
-            msg = f"{self.nameActionEnable} AND attach in Visual Studio Code"
+            msg = f"{self.nameActionEnable} (this plugin) AND Start {self.msg_vs}({self.msg_debug})"
             self.msgBar.pushWarning(self.pluginName, msg)
             return False
         return True
+
+    def _debugFile(self, filepath):
+        if not self._checkEnable():
+            return
+
+        self.debugpy.wait_for_client()
+        runpy.run_path( filepath, run_name='__main__' )
+
+        # with open(filepath, 'r') as f:
+        #     exec( f.read() )
 
     @pyqtSlot(bool)
     def enable(self, checked):
         self.msgBar.popWidget()
         if self.debugpy is None:
-            self.msgBar.pushCritical(self.pluginName, "Need install debugpy: pip3 install debugpy")
+            self.msgBar.pushCritical(self.pluginName, "Need to install debugpy: pip3 install debugpy")
             return
-        msgPort = f'"request": "attach", "Port": {self.port}, "host": "{self.host}"'
+
         if self.debugpy.is_client_connected():
-            self.msgBar.pushWarning(self.pluginName, f"Remote Debug for Visual Studio is active({msgPort})")
+            self.msgBar.pushWarning(self.pluginName, f"QGIS is already set up for {self.msg_vs}({self.msg_debug})")
             return
+
+        if self.debugpy._already_listening:
+            self.msgBar.pushWarning(self.pluginName, f"Start {self.msg_vs}({self.msg_debug})")
+            return
+
         t_, self.port = self.debugpy.listen((self.host, self.port))
-        msgPort = f'"request": "enable_attach", "Port": {self.port}, "host": "{self.host}"'
-        self.msgBar.pushInfo(self.pluginName, f"Remote Debug for Visual Studio is running({msgPort})")
+        self.debugpy._already_listening = True
+        self.msgBar.pushInfo(self.pluginName, f"QGIS is ready for {self.msg_vs}({self.msg_debug})")
 
     @pyqtSlot(bool)
     def load(self, checked):
         if not self._checkEnable():
             return
 
-        filename, _ = QFileDialog.getOpenFileName(None, "Debug script", "", "Python Files (*.py)")
-        if not filename:
+        filepath, _ = QFileDialog.getOpenFileName(None, "Debug script", "", "Python Files (*.py)")
+        if not filepath:
             return
 
-        self.debugpy.wait_for_client()
-        exec(open(filename).read())
+        self._debugFile( filepath )
 
-        if not self._existsActionScript(filename):
-            self._addActionScript(filename)
+        if not self._existsActionScript(filepath):
+            self._addActionScript(filepath)
 
     @pyqtSlot(bool)
     def run(self, checked):
-        if not self._checkEnable():
-            return
-
         action = self.sender()
-        filename = action.toolTip()
+        filepath = action.toolTip()
 
-        self.debugpy.wait_for_client()
-        exec(open(filename).read())
+        self._debugFile( filepath )
